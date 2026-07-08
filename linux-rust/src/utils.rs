@@ -3,7 +3,12 @@ use aes::cipher::Array;
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
 use iced::Theme;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+use crate::devices::enums::DeviceData;
+
+const EMPTY_DEVICES_JSON: &str = "{}";
 
 pub fn get_devices_path() -> PathBuf {
     let data_dir = std::env::var("XDG_DATA_HOME")
@@ -11,6 +16,34 @@ pub fn get_devices_path() -> PathBuf {
     PathBuf::from(data_dir)
         .join("librepods")
         .join("devices.json")
+}
+
+pub fn ensure_devices_file() -> std::io::Result<()> {
+    let path = get_devices_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if !path.exists() {
+        std::fs::write(&path, EMPTY_DEVICES_JSON)?;
+    }
+    Ok(())
+}
+
+pub fn read_devices_list() -> HashMap<String, DeviceData> {
+    if ensure_devices_file().is_err() {
+        return HashMap::new();
+    }
+    std::fs::read_to_string(get_devices_path())
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+pub fn write_devices_list(devices: &HashMap<String, DeviceData>) -> std::io::Result<()> {
+    ensure_devices_file()?;
+    let json = serde_json::to_string(devices)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(get_devices_path(), json)
 }
 
 pub fn get_preferences_path() -> PathBuf {

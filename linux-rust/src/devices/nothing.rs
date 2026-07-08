@@ -1,7 +1,7 @@
 use crate::bluetooth::att::{ATTHandles, ATTManager};
 use crate::devices::enums::{DeviceData, DeviceInformation, DeviceType};
 use crate::ui::messages::BluetoothUIMessage;
-use crate::utils::get_devices_path;
+use crate::utils::{read_devices_list, write_devices_list};
 use bluer::Address;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
@@ -38,10 +38,7 @@ impl NothingDevice {
             .register_listener(ATTHandles::NothingEverythingRead, tx)
             .await;
 
-        let devices: HashMap<String, DeviceData> = std::fs::read_to_string(get_devices_path())
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+        let devices: HashMap<String, DeviceData> = read_devices_list();
         let device_key = mac_address.to_string();
         let information = if let Some(device_data) = devices.get(&device_key) {
             let info = device_data.information.clone();
@@ -112,8 +109,7 @@ impl NothingDevice {
                             information: Some(DeviceInformation::Nothing(new_information)),
                         },
                     );
-                    let json = serde_json::to_string(&new_devices).unwrap();
-                    std::fs::write(get_devices_path(), json).expect("Failed to write devices file");
+                    write_devices_list(&new_devices).expect("Failed to write devices file");
                 } else if data.starts_with(&[0x55, 0x20, 0x01, 0x06, 0x40]) {
                     let serial_number_start_position = data
                         .iter()
@@ -153,9 +149,7 @@ impl NothingDevice {
                                 information: Some(DeviceInformation::Nothing(new_information)),
                             },
                         );
-                        let json = serde_json::to_string(&new_devices).unwrap();
-                        std::fs::write(get_devices_path(), json)
-                            .expect("Failed to write devices file");
+                        write_devices_list(&new_devices).expect("Failed to write devices file");
                     } else {
                         debug!(
                             "Serial number format unexpected from Nothing device {}: {:?}",

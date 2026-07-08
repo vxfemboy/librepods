@@ -10,7 +10,7 @@ use crate::bluetooth::managers::DeviceManagers;
 use crate::devices::enums::DeviceData;
 use crate::ui::messages::BluetoothUIMessage;
 use crate::ui::tray::MyTray;
-use crate::utils::{get_app_settings_path, get_devices_path};
+use crate::utils::read_devices_list;
 use bluer::{Address, InternalErrorKind};
 use clap::Parser;
 use dbus::arg::{RefArg, Variant};
@@ -36,6 +36,8 @@ struct Args {
         help = "Disable system tray, useful if your environment doesn't support AppIndicator or StatusNotifier"
     )]
     no_tray: bool,
+    #[arg(long, help = "Run without the GUI window (Bluetooth control only)")]
+    headless: bool,
     #[arg(long, help = "Start the application minimized to tray")]
     start_minimized: bool,
     #[arg(
@@ -82,15 +84,12 @@ fn main() -> iced::Result {
     let device_managers: Arc<RwLock<HashMap<String, DeviceManagers>>> =
         Arc::new(RwLock::new(HashMap::new()));
 
-    // Load stem_control initial value from settings JSON, then apply CLI override.
-    if args.no_tray {
-        // Run headless without UI
+    if args.headless {
         info!("Running in headless mode (no GUI)");
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async_main(ui_tx, device_managers)).unwrap();
         Ok(())
     } else {
-        // Run with UI
         let device_managers_clone = device_managers.clone();
         std::thread::spawn(|| {
             let rt = tokio::runtime::Runtime::new().unwrap();
@@ -110,16 +109,7 @@ async fn async_main(
 
     let mut managed_devices_mac: Vec<String> = Vec::new(); // includes ony non-AirPods. AirPods handled separately.
 
-    let devices_path = get_devices_path();
-    let devices_json = std::fs::read_to_string(&devices_path).unwrap_or_else(|e| {
-        log::error!("Failed to read devices file: {}", e);
-        "{}".to_string()
-    });
-    let devices_list: HashMap<String, DeviceData> = serde_json::from_str(&devices_json)
-        .unwrap_or_else(|e| {
-            log::error!("Deserialization failed: {}", e);
-            HashMap::new()
-        });
+    let devices_list: HashMap<String, DeviceData> = read_devices_list();
     for (mac, device_data) in devices_list.iter() {
         if device_data.type_ == devices::enums::DeviceType::Nothing {
             managed_devices_mac.push(mac.clone());
@@ -145,8 +135,18 @@ async fn async_main(
             command_tx: None,
             ui_tx: Some(ui_tx.clone()),
         };
-        let handle = tray.spawn().await.unwrap();
-        Some(handle)
+        match tray.spawn().await {
+            Ok(handle) => Some(handle),
+            Err(e) => {
+                warn!(
+                    "System tray unavailable ({}); continuing without tray icon. \
+                     Use --no-tray to suppress this warning, or install a StatusNotifier host \
+                     (e.g. waybar with tray module on niri).",
+                    e
+                );
+                None
+            }
+        }
     };
 
     let session = bluer::Session::new().await?;

@@ -9,7 +9,7 @@ use crate::devices::enums::{
 use crate::ui::airpods::airpods_view;
 use crate::ui::messages::BluetoothUIMessage;
 use crate::ui::nothing::nothing_view;
-use crate::utils::{MyTheme, get_app_settings_path, get_devices_path};
+use crate::utils::{MyTheme, get_app_settings_path, read_devices_list, write_devices_list};
 use bluer::{Address};
 use iced::border::Radius;
 use iced::overlay::menu;
@@ -308,16 +308,7 @@ impl App {
                         // }));
 
                         let type_ = {
-                            let devices_json = std::fs::read_to_string(get_devices_path())
-                                .unwrap_or_else(|e| {
-                                    error!("Failed to read devices file: {}", e);
-                                    "{}".to_string()
-                                });
-                            let devices_list: HashMap<String, DeviceData> =
-                                serde_json::from_str(&devices_json).unwrap_or_else(|e| {
-                                    error!("Deserialization failed: {}", e);
-                                    HashMap::new()
-                                });
+                            let devices_list = read_devices_list();
                             devices_list.get(&mac).map(|d| d.type_.clone())
                         };
                         match type_ {
@@ -329,16 +320,7 @@ impl App {
                                 let state = aacp_manager_state.blocking_lock();
                                 debug!("AACP manager found for AirPods device {}", mac);
                                 let device_name = {
-                                    let devices_json = std::fs::read_to_string(get_devices_path())
-                                        .unwrap_or_else(|e| {
-                                            error!("Failed to read devices file: {}", e);
-                                            "{}".to_string()
-                                        });
-                                    let devices_list: HashMap<String, DeviceData> =
-                                        serde_json::from_str(&devices_json).unwrap_or_else(|e| {
-                                            error!("Deserialization failed: {}", e);
-                                            HashMap::new()
-                                        });
+                                    let devices_list = read_devices_list();
                                     devices_list
                                         .get(&mac)
                                         .map(|d| d.name.clone())
@@ -557,16 +539,7 @@ impl App {
                 if let Some((name, addr)) = self.pending_add_device.take()
                     && let Some(type_) = self.selected_device_type.take()
                 {
-                    let devices_path = get_devices_path();
-                    let devices_json = std::fs::read_to_string(&devices_path).unwrap_or_else(|e| {
-                        error!("Failed to read devices file: {}", e);
-                        "{}".to_string()
-                    });
-                    let mut devices_list: HashMap<String, DeviceData> =
-                        serde_json::from_str(&devices_json).unwrap_or_else(|e| {
-                            error!("Deserialization failed: {}", e);
-                            HashMap::new()
-                        });
+                    let mut devices_list = read_devices_list();
                     devices_list.insert(
                         addr.to_string(),
                         DeviceData {
@@ -575,11 +548,7 @@ impl App {
                             information: None,
                         },
                     );
-                    let updated_json = serde_json::to_string(&devices_list).unwrap_or_else(|e| {
-                        error!("Serialization failed: {}", e);
-                        "{}".to_string()
-                    });
-                    if let Err(e) = std::fs::write(&devices_path, updated_json) {
+                    if let Err(e) = write_devices_list(&devices_list) {
                         error!("Failed to write devices file: {}", e);
                     }
                     self.selected_tab = Tab::Device(addr.to_string());
@@ -595,16 +564,7 @@ impl App {
                 self.device_states.insert(mac.clone(), state);
                 // if airpods, update the noise control state combo box based on allow off mode
                 let type_ = {
-                    let devices_json =
-                        std::fs::read_to_string(get_devices_path()).unwrap_or_else(|e| {
-                            error!("Failed to read devices file: {}", e);
-                            "{}".to_string()
-                        });
-                    let devices_list: HashMap<String, DeviceData> =
-                        serde_json::from_str(&devices_json).unwrap_or_else(|e| {
-                            error!("Deserialization failed: {}", e);
-                            HashMap::new()
-                        });
+                    let devices_list = read_devices_list();
                     devices_list.get(&mac).map(|d| d.type_.clone())
                 };
                 if let Some(DeviceType::AirPods) = type_
@@ -660,15 +620,7 @@ impl App {
     }
 
     fn view(&self, _id: window::Id) -> Element<'_, Message> {
-        let devices_json = std::fs::read_to_string(get_devices_path()).unwrap_or_else(|e| {
-            error!("Failed to read devices file: {}", e);
-            "{}".to_string()
-        });
-        let devices_list: HashMap<String, DeviceData> = serde_json::from_str(&devices_json)
-            .unwrap_or_else(|e| {
-                error!("Deserialization failed: {}", e);
-                HashMap::new()
-            });
+        let devices_list = read_devices_list();
         let pane_grid = pane_grid::PaneGrid::new(&self.panes, |_pane_id, pane, _is_maximized| {
             match pane {
                 Pane::Sidebar => {

@@ -1,7 +1,7 @@
 use crate::bluetooth::aacp::BatteryStatus;
 use crate::devices::enums::{DeviceData, DeviceInformation, DeviceType};
 use crate::ui::tray::MyTray;
-use crate::utils::{ah, get_devices_path, get_preferences_path};
+use crate::utils::{ah, get_preferences_path, read_devices_list};
 use aes::Aes128;
 use aes::cipher::Array;
 use aes::cipher::{BlockCipherDecrypt, KeyInit};
@@ -51,10 +51,7 @@ pub async fn start_le_monitor(tray_handle: Option<ksni::Handle<MyTray>>) -> blue
     let adapter = session.default_adapter().await?;
     adapter.set_powered(true).await?;
 
-    let all_devices: HashMap<String, DeviceData> = std::fs::read_to_string(get_devices_path())
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    let all_devices: HashMap<String, DeviceData> = read_devices_list();
 
     let mut verified_macs: HashMap<Address, String> = HashMap::new();
     let mut failed_macs: HashSet<Address> = HashSet::new();
