@@ -564,7 +564,16 @@ impl MediaController {
             return cached_profile;
         }
 
-        for profile in ["a2dp-sink-sbc_xq", "a2dp-sink-sbc", "a2dp-sink"] {
+        // Prefer the highest-quality codec. AirPods are tuned for AAC (it's what
+        // iOS streams to them), so try AAC first, then fall back in descending
+        // quality order. The bare "a2dp-sink" maps to PipeWire's highest-priority
+        // available codec, which is AAC on systems with AAC support.
+        for profile in [
+            "a2dp-sink-aac",
+            "a2dp-sink",
+            "a2dp-sink-sbc_xq",
+            "a2dp-sink-sbc",
+        ] {
             if self.is_profile_available(index, profile).await {
                 info!("Selected best available A2DP profile: {}", profile);
                 self.state.lock().await.cached_a2dp_profile = profile.to_string();
@@ -596,21 +605,27 @@ impl MediaController {
 
     async fn restart_wire_plumber(&self) -> bool {
         info!("Restarting WirePlumber to rediscover A2DP profiles");
-        let result = Command::new("systemctl")
-            .args(["--user", "restart", "wireplumber"])
-            .output();
-
-        match result {
-            Ok(output) if output.status.success() => {
-                info!("WirePlumber restarted successfully");
+        // Init-system agnostic: try known service managers in order rather than
+        // assuming systemd. First one that succeeds wins.
+        let strategies: [(&str, &[&str]); 3] = [
+            ("systemctl", &["--user", "restart", "wireplumber"]),
+            ("sv", &["restart", "wireplumber"]),
+            ("rc-service", &["wireplumber", "restart"]),
+        ];
+        for (cmd, args) in strategies {
+            if let Ok(output) = Command::new(cmd).args(args).output()
+                && output.status.success()
+            {
+                info!("WirePlumber restarted via {}", cmd);
                 tokio::time::sleep(Duration::from_secs(2)).await;
-                true
-            }
-            _ => {
-                error!("Failed to restart WirePlumber. Do you use wireplumber?");
-                false
+                return true;
             }
         }
+        error!(
+            "Could not restart WirePlumber (tried systemctl/sv/rc-service). \
+             If your session runs WirePlumber unsupervised, restart it manually."
+        );
+        false
     }
 
     async fn get_audio_device_index(&self, mac: &str) -> Option<u32> {

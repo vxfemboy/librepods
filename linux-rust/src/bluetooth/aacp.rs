@@ -1,6 +1,6 @@
 use crate::devices::airpods::AirPodsInformation;
 use crate::devices::enums::{DeviceData, DeviceInformation, DeviceType};
-use crate::utils::get_devices_path;
+use crate::utils::{ensure_devices_file, get_devices_path, read_devices_list};
 use bluer::{
     Address, AddressType, Error, Result,
     l2cap::{SeqPacket, Socket, SocketAddr},
@@ -86,6 +86,7 @@ pub enum ControlCommandIdentifiers {
     EarDetectionConfig = 0x0A,
     AutomaticConnectionConfig = 0x20,
     OwnsConnection = 0x06,
+    UplinkEqBud = 0x3E,
 }
 
 impl ControlCommandIdentifiers {
@@ -126,6 +127,7 @@ impl ControlCommandIdentifiers {
             0x0A => Some(Self::EarDetectionConfig),
             0x20 => Some(Self::AutomaticConnectionConfig),
             0x06 => Some(Self::OwnsConnection),
+            0x3E => Some(Self::UplinkEqBud),
             _ => None,
         }
     }
@@ -169,6 +171,7 @@ impl std::fmt::Display for ControlCommandIdentifiers {
             ControlCommandIdentifiers::EarDetectionConfig => "Ear Detection Config",
             ControlCommandIdentifiers::AutomaticConnectionConfig => "Automatic Connection Config",
             ControlCommandIdentifiers::OwnsConnection => "Owns Connection",
+            ControlCommandIdentifiers::UplinkEqBud => "Uplink EQ Bud",
         };
         write!(f, "{}", name)
     }
@@ -334,10 +337,7 @@ pub struct AACPManagerState {
 
 impl AACPManagerState {
     fn new() -> Self {
-        let devices: HashMap<String, DeviceData> = std::fs::read_to_string(get_devices_path())
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+        let devices: HashMap<String, DeviceData> = read_devices_list();
         AACPManagerState {
             sender: None,
             control_command_status_list: Vec::new(),
@@ -721,10 +721,8 @@ impl AACPManager {
                     device_data.information = Some(DeviceInformation::AirPods(info.clone()));
                 }
                 let json = serde_json::to_string(&state.devices).unwrap();
-                if let Some(parent) = get_devices_path().parent()
-                    && let Err(e) = tokio::fs::create_dir_all(&parent).await
-                {
-                    error!("Failed to create directory for devices: {}", e);
+                if ensure_devices_file().is_err() {
+                    error!("Failed to create devices file");
                     return;
                 }
                 if let Err(e) = tokio::fs::write(&get_devices_path(), json).await {
@@ -808,10 +806,8 @@ impl AACPManager {
                     }
                 }
                 let json = serde_json::to_string(&state.devices).unwrap();
-                if let Some(parent) = get_devices_path().parent()
-                    && let Err(e) = tokio::fs::create_dir_all(&parent).await
-                {
-                    error!("Failed to create directory for devices: {}", e);
+                if ensure_devices_file().is_err() {
+                    error!("Failed to create devices file");
                     return;
                 }
                 if let Err(e) = tokio::fs::write(&get_devices_path(), json).await {

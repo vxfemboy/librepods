@@ -367,6 +367,23 @@ pub fn airpods_view<'a>(
         if let Some(DeviceInformation::AirPods(ref airpods_info)) = device.information {
             let info_rows = column![
                 row![
+                    text("MAC Address").size(16).style(|theme: &Theme| {
+                        let mut style = text::Style::default();
+                        style.color = Some(theme.palette().text);
+                        style
+                    }),
+                    Space::new().width(Length::Fill),
+                    button(text(mac_information.clone()).size(16))
+                        .style(|theme: &Theme, _status| {
+                            let mut style = Style::default();
+                            style.text_color = theme.palette().text;
+                            style.background = Some(Background::Color(Color::TRANSPARENT));
+                            style
+                        })
+                        .padding(0)
+                        .on_press(Message::CopyToClipboard(mac_information.clone()))
+                ],
+                row![
                     text("Model Number").size(16).style(|theme: &Theme| {
                         let mut style = text::Style::default();
                         style.color = Some(theme.palette().text);
