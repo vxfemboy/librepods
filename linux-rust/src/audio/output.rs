@@ -41,7 +41,7 @@ impl VirtualMic {
 
         let sink_args = format!(
             "sink_name={SINK_NAME} channel_map={chan_map} \
-             sink_properties=\"device.description=AirPods_HiRes_Sink node.driver=false priority.driver=0\""
+             sink_properties=\"device.description=AirPods_HiRes_Sink node.driver=false priority.driver=0 priority.session=0 node.dont-reconnect=true\""
         );
         let sink_module = match load_module("module-null-sink", &sink_args) {
             Some(i) => i,

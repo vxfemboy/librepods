@@ -652,6 +652,16 @@ impl MediaController {
 
     pub async fn deactivate_a2dp_profile(&self) {
         debug!("Entering deactivate_a2dp_profile");
+        // When the hi-res mic is enabled, the audio::hires subsystem owns the
+        // A2DP transport (it keeps A2DP up alongside the AACP 0x58 uplink).
+        // Forcing the card profile to "off" here rips that stream out from
+        // under it, causing capture stalls, restart loops and disconnects, and
+        // it also contradicts the "always keep highest-quality playback" intent.
+        // So don't deactivate while hi-res mic is on.
+        if crate::utils::AppSettings::load().hires_mic_enabled {
+            debug!("hi-res mic enabled; skipping A2DP deactivation (transport owned by hires)");
+            return;
+        }
         let mut state = self.state.lock().await;
 
         if state.device_index.is_none() {
