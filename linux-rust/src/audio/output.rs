@@ -23,8 +23,7 @@ const SINK_NAME: &str = "AirPodsHiRes_raw";
 pub const SOURCE_NAME: &str = "AirPodsHiRes";
 
 pub struct VirtualMic {
-    sink_module: u32,
-    source_module: u32,
+    module: u32,
 }
 
 unsafe impl Send for VirtualMic {}
@@ -39,27 +38,19 @@ impl VirtualMic {
             "front-left,front-right"
         };
 
-        let sink_args = format!(
-            "sink_name={SINK_NAME} channel_map={chan_map} \
-             sink_properties=\"device.description=AirPods_HiRes_Sink node.driver=false priority.driver=0 priority.session=0 node.dont-reconnect=true\""
+        // A single PipeWire virtual *source* (Audio/Source/Virtual) rather than a
+        // null-sink + remap-source. This exposes only the AirPodsHiRes microphone
+        // and creates no playback sink, so nothing shows up as a selectable output
+        // (and no separate feeding stream on a visible sink). The decoder feeds it
+        // via a playback stream targeting this node's input.
+        let args = format!(
+            "media.class=Audio/Source/Virtual sink_name={SOURCE_NAME} channel_map={chan_map} \
+             sink_properties=\"device.description=AirPods_HiRes_Mic node.driver=false\""
         );
-        let sink_module = match load_module("module-null-sink", &sink_args) {
+        let module = match load_module("module-null-sink", &args) {
             Some(i) => i,
             None => {
-                warn!("could not load module-null-sink");
-                return None;
-            }
-        };
-
-        let source_args = format!(
-            "master={SINK_NAME}.monitor source_name={SOURCE_NAME} channel_map={chan_map} \
-             source_properties=\"device.description=AirPods_HiRes_Mic node.driver=false priority.driver=0\""
-        );
-        let source_module = match load_module("module-remap-source", &source_args) {
-            Some(i) => i,
-            None => {
-                warn!("could not load module-remap-source");
-                unload_module(sink_module);
+                warn!("could not load hi-res virtual source (module-null-sink)");
                 return None;
             }
         };
@@ -68,17 +59,13 @@ impl VirtualMic {
             "[pw] hi-res mic ready: select '{}' as your microphone",
             SOURCE_NAME
         );
-        Some(VirtualMic {
-            sink_module,
-            source_module,
-        })
+        Some(VirtualMic { module })
     }
 }
 
 impl Drop for VirtualMic {
     fn drop(&mut self) {
-        unload_module(self.source_module);
-        unload_module(self.sink_module);
+        unload_module(self.module);
     }
 }
 
@@ -116,7 +103,7 @@ impl Output {
             None,
             "LibrePods",
             Direction::Playback,
-            Some(SINK_NAME),
+            Some(SOURCE_NAME),
             "AirPodsHiRes",
             &spec,
             None,
