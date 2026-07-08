@@ -136,6 +136,14 @@ async fn monitor_loop(
     let mut capture: Option<Capture> = None;
     // Conversation detection value saved while we override it off for capture.
     let mut old_convo_state: Option<bool> = None;
+    // Backoff for the stall path: if the device stops delivering the 0x58
+    // uplink (e.g. a call grabbed the native HFP mic), restarting every poll
+    // thrashes the transport into a disconnect. After a few consecutive
+    // restarts, pause for a cooldown and retry later instead of hammering.
+    const MAX_STALL_RESTARTS: u32 = 3;
+    const STALL_COOLDOWN_POLLS: u32 = 25;
+    let mut stall_restarts: u32 = 0;
+    let mut cooldown: u32 = 0;
     info!(
         "[hires] activity monitor started, watching '{}'",
         output::SOURCE_NAME
@@ -156,17 +164,23 @@ async fn monitor_loop(
 
         match (enabled, recording, capture.is_some()) {
             (true, true, false) => {
-                info!("[hires] recorder detected ({:?}), starting capture", app);
-                if let Some(c) = start_capture(&aacp, &addr, &status).await {
-                    status.set_capture(app);
-                    capture = Some(c);
+                if cooldown > 0 {
+                    // Waiting out a stall storm (likely an active call). Retry
+                    // once the cooldown elapses rather than every poll.
+                    cooldown -= 1;
+                } else {
+                    info!("[hires] recorder detected ({:?}), starting capture", app);
+                    if let Some(c) = start_capture(&aacp, &addr, &status).await {
+                        status.set_capture(app);
+                        capture = Some(c);
 
-                    // Only disable (and remember to restore) if it was on.
-                    if crate::utils::AppSettings::load().hires_mic_pause_convo
-                        && aacp.conversation_detection_enabled().await
-                    {
-                        old_convo_state = Some(true);
-                        aacp.set_conversation_detection(false).await;
+                        // Only disable (and remember to restore) if it was on.
+                        if crate::utils::AppSettings::load().hires_mic_pause_convo
+                            && aacp.conversation_detection_enabled().await
+                        {
+                            old_convo_state = Some(true);
+                            aacp.set_conversation_detection(false).await;
+                        }
                     }
                 }
             }
@@ -174,16 +188,35 @@ async fn monitor_loop(
                 status.set_capture(app);
                 let stalled = status.since_last_sdu().is_some_and(|d| d > STALL_TIMEOUT);
                 if stalled {
-                    warn!(
-                        "[hires] no audio from device for {}ms, restarting capture",
-                        STALL_TIMEOUT.as_millis()
-                    );
-                    stop_capture(capture.take().unwrap(), &aacp, &addr).await;
-                    capture = start_capture(&aacp, &addr, &status).await;
-                    if capture.is_none() {
-                        warn!("[hires] capture restart failed; will retry on next poll");
+                    if stall_restarts >= MAX_STALL_RESTARTS {
+                        warn!(
+                            "[hires] no audio after {} restarts (native mic in use by a call?); \
+                             pausing hi-res capture for a cooldown before retrying",
+                            stall_restarts
+                        );
+                        stop_capture(capture.take().unwrap(), &aacp, &addr).await;
+                        if let Some(prev) = old_convo_state.take() {
+                            aacp.set_conversation_detection(prev).await;
+                        }
                         status.reset();
+                        stall_restarts = 0;
+                        cooldown = STALL_COOLDOWN_POLLS;
+                    } else {
+                        warn!(
+                            "[hires] no audio from device for {}ms, restarting capture",
+                            STALL_TIMEOUT.as_millis()
+                        );
+                        stall_restarts += 1;
+                        stop_capture(capture.take().unwrap(), &aacp, &addr).await;
+                        capture = start_capture(&aacp, &addr, &status).await;
+                        if capture.is_none() {
+                            warn!("[hires] capture restart failed; will retry on next poll");
+                            status.reset();
+                        }
                     }
+                } else {
+                    // Healthy capture — clear the restart counter.
+                    stall_restarts = 0;
                 }
             }
             // Disabled while capturing: end the 0x58 stream now.
@@ -200,7 +233,12 @@ async fn monitor_loop(
                 }
                 status.reset();
             }
-            _ => {}
+            _ => {
+                // No recorder / disabled and idle: clear any backoff so the
+                // next genuine recorder open starts fresh.
+                cooldown = 0;
+                stall_restarts = 0;
+            }
         }
 
         // Once disabled and nothing is recording from the source, unload it.

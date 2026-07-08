@@ -251,16 +251,26 @@ pub fn reset_a2dp(bdaddr: &str) {
     // Get all active media players
     let players = playing_media_players();
 
+    // The reset exists to (re)establish the A2DP transport for the hi-res mic.
+    // If the card has been pushed to HFP or "off" (e.g. a call grabbed the
+    // native handsfree mic), restoring that would starve the AACP uplink and
+    // spin the capture-restart loop into a disconnect. Force an A2DP profile:
+    // keep the current one only if it is already A2DP.
+    let target = if current_profile.starts_with("a2dp-") {
+        current_profile.clone()
+    } else {
+        "a2dp-sink".to_string()
+    };
     info!(
-        "[pw] reset A2DP transport: {} off -> {}",
-        card, current_profile
+        "[pw] reset A2DP transport: {} {} -> {}",
+        card, current_profile, target
     );
     let op = introspect.set_card_profile_by_name(&card, "off", None);
     while op.get_state() == OperationState::Running {
         mainloop.iterate(false);
     }
 
-    let op = introspect.set_card_profile_by_name(&card, &current_profile, None);
+    let op = introspect.set_card_profile_by_name(&card, &target, None);
     while op.get_state() == OperationState::Running {
         mainloop.iterate(false);
     }
