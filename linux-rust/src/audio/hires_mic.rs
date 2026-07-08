@@ -173,6 +173,8 @@ async fn monitor_loop(
                     if let Some(c) = start_capture(&aacp, &addr, &status).await {
                         status.set_capture(app);
                         capture = Some(c);
+                        // Fresh capture session: reset the restart budget.
+                        stall_restarts = 0;
 
                         // Only disable (and remember to restore) if it was on.
                         if crate::utils::AppSettings::load().hires_mic_pause_convo
@@ -214,10 +216,13 @@ async fn monitor_loop(
                             status.reset();
                         }
                     }
-                } else {
-                    // Healthy capture — clear the restart counter.
-                    stall_restarts = 0;
                 }
+                // NB: do not clear stall_restarts here on a transient "not
+                // stalled" poll. since_last_sdu() is None right after a restart
+                // (no SDU yet), which reads as "not stalled" and would zero the
+                // budget every cycle, so the cooldown could never trigger. The
+                // budget is reset only when a genuinely fresh capture session
+                // starts, or after a cooldown.
             }
             // Disabled while capturing: end the 0x58 stream now.
             // The virtual source stays up feeding silence, so an active
