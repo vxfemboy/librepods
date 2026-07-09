@@ -219,10 +219,9 @@ impl AirPodsDevice {
             while let Some(value) = owns_connection_rx.recv().await {
                 let owns = value.first().copied().unwrap_or(0) != 0;
                 if !owns {
-                    info!("Lost ownership, pausing media and disconnecting audio");
+                    info!("Lost ownership; pausing media (keeping A2DP profile active)");
                     let controller = mc_clone_owns.lock().await;
                     controller.pause_all_media().await;
-                    controller.deactivate_a2dp_profile().await;
                 }
             }
         });
@@ -348,7 +347,6 @@ impl AirPodsDevice {
                             .send((ControlCommandIdentifiers::OwnsConnection, vec![0x00]));
                         let controller = mc_clone.lock().await;
                         controller.pause_all_media().await;
-                        controller.deactivate_a2dp_profile().await;
                     }
                     AACPEvent::StemPress(press_type, bud_type) => {
                         use crate::bluetooth::aacp::StemPressType;

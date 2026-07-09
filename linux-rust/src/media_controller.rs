@@ -13,7 +13,6 @@ use libpulse_binding::proplist::Proplist;
 use libpulse_binding::volume::{ChannelVolumes, Volume};
 use log::{debug, error, info, warn};
 use std::cell::RefCell;
-use std::process::Command;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -328,24 +327,13 @@ impl MediaController {
         }
 
         if !self.is_a2dp_profile_available().await {
-            warn!("A2DP profile not available, attempting to restart WirePlumber");
-            if self.restart_wire_plumber().await {
-                let mut state = self.state.lock().await;
-                state.device_index = self
-                    .get_audio_device_index(&state.connected_device_mac)
-                    .await;
-                debug!(
-                    "Updated device_index after WirePlumber restart: {:?}",
-                    state.device_index
-                );
-                if !self.is_a2dp_profile_available().await {
-                    error!("A2DP profile still not available after WirePlumber restart");
-                    return;
-                }
-            } else {
-                error!("Could not restart WirePlumber, A2DP profile unavailable");
-                return;
-            }
+            // Usually the card just hasn't finished (re)enumerating yet after a
+            // (re)connect. Force-restarting WirePlumber to fix that is
+            // unreliable (impossible on unsupervised sessions) and only spammed
+            // errors, so skip this round — the next playback/connect event
+            // retries once the profile shows up.
+            debug!("A2DP profile not available yet; will retry on the next event");
+            return;
         }
 
         let preferred_profile = self.get_preferred_a2dp_profile().await;
@@ -601,31 +589,6 @@ impl MediaController {
         })
             .await
             .unwrap_or(false)
-    }
-
-    async fn restart_wire_plumber(&self) -> bool {
-        info!("Restarting WirePlumber to rediscover A2DP profiles");
-        // Init-system agnostic: try known service managers in order rather than
-        // assuming systemd. First one that succeeds wins.
-        let strategies: [(&str, &[&str]); 3] = [
-            ("systemctl", &["--user", "restart", "wireplumber"]),
-            ("sv", &["restart", "wireplumber"]),
-            ("rc-service", &["wireplumber", "restart"]),
-        ];
-        for (cmd, args) in strategies {
-            if let Ok(output) = Command::new(cmd).args(args).output()
-                && output.status.success()
-            {
-                info!("WirePlumber restarted via {}", cmd);
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                return true;
-            }
-        }
-        error!(
-            "Could not restart WirePlumber (tried systemctl/sv/rc-service). \
-             If your session runs WirePlumber unsupervised, restart it manually."
-        );
-        false
     }
 
     async fn get_audio_device_index(&self, mac: &str) -> Option<u32> {
