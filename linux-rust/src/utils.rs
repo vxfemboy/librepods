@@ -210,7 +210,10 @@ impl Default for AppSettings {
             theme: MyTheme::Dark,
             tray_text_mode: false,
             stem_control: false,
-            hires_mic_enabled: true,
+            // Off by default: the Apple hi-res uplink is fragile on some
+            // adapters (transport resets can wedge audio / crash mixers) and it
+            // adds a second input device. Opt in via the toggle when wanted.
+            hires_mic_enabled: false,
             hires_mic_agc: true,
             hires_mic_pause_convo: true,
             a2dp_reset: true,
